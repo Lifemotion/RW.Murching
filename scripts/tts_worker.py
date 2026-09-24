@@ -139,6 +139,11 @@ def main() -> int:
 
     emit({"event": "ready", "engine": engine.name, "sample_rate": engine.sample_rate, "device": engine.device})
 
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
+
     for line in sys.stdin:
         line = line.strip()
         if not line:

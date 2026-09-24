@@ -41,7 +41,7 @@ if ($Cpu) {
 } else {
     & $pip -m pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128   # 2.9+ needs torchcodec + FFmpeg shared DLLs
 }
-& $pip -m pip install coqui-tts "transformers>=4.43,<5"   # coqui-tts 0.27 breaks with transformers 5.x
+& $pip -m pip install coqui-tts "transformers>=4.43,<5" spacy   # coqui-tts 0.27 breaks with transformers 5.x; spacy splits long sentences for XTTS
 if ($Chatterbox) { & $pip -m pip install chatterbox-tts }
 
 & $pip -c "import torch, TTS; print('torch', torch.__version__, 'cuda:', torch.cuda.is_available()); print('coqui-tts', TTS.__version__)"
