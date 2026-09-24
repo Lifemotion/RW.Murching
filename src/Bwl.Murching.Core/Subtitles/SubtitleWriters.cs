@@ -1,0 +1,203 @@
+using System.Globalization;
+using System.Text;
+using Bwl.Murching.Common;
+
+namespace Bwl.Murching.Subtitles;
+
+public enum SubtitleFormat
+{
+    Srt,
+    Vtt,
+    Ass,
+    Txt,
+}
+
+public interface ISubtitleWriter
+{
+    SubtitleFormat Format { get; }
+
+    string Extension { get; }
+
+    void Write(TextWriter writer, SubtitleDocument document);
+}
+
+public static class SubtitleWriters
+{
+    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
+
+    public static ISubtitleWriter For(SubtitleFormat format) => format switch
+    {
+        SubtitleFormat.Srt => new SrtWriter(),
+        SubtitleFormat.Vtt => new VttWriter(),
+        SubtitleFormat.Ass => new AssWriter(),
+        SubtitleFormat.Txt => new TxtWriter(),
+        _ => throw new ArgumentOutOfRangeException(nameof(format)),
+    };
+
+    public static string Extension(SubtitleFormat format) => For(format).Extension;
+
+    public static string ToText(SubtitleDocument document, SubtitleFormat format)
+    {
+        var sb = new StringBuilder();
+        using var writer = new StringWriter(sb) { NewLine = "\n" };
+        For(format).Write(writer, document);
+        return sb.ToString();
+    }
+
+    public static void Write(string path, SubtitleDocument document, SubtitleFormat format)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        // SRT readers of all ages cope best with a BOM-less UTF-8 file; the same is true for VTT/ASS.
+        using var writer = new StreamWriter(path, false, Utf8NoBom) { NewLine = "\n" };
+        For(format).Write(writer, document);
+    }
+
+    public static bool TryParseFormat(string text, out SubtitleFormat format)
+    {
+        var t = text.Trim().TrimStart('.').ToLowerInvariant();
+        switch (t)
+        {
+            case "srt":
+                format = SubtitleFormat.Srt;
+                return true;
+            case "vtt":
+            case "webvtt":
+                format = SubtitleFormat.Vtt;
+                return true;
+            case "ass":
+            case "ssa":
+                format = SubtitleFormat.Ass;
+                return true;
+            case "txt":
+            case "text":
+                format = SubtitleFormat.Txt;
+                return true;
+            default:
+                format = default;
+                return false;
+        }
+    }
+}
+
+public sealed class SrtWriter : ISubtitleWriter
+{
+    public SubtitleFormat Format => SubtitleFormat.Srt;
+
+    public string Extension => ".srt";
+
+    public void Write(TextWriter writer, SubtitleDocument document)
+    {
+        var index = 1;
+        foreach (var cue in document.Cues)
+        {
+            writer.Write(index++.ToString(CultureInfo.InvariantCulture));
+            writer.Write('\n');
+            writer.Write(TimeFormat.Srt(cue.Start));
+            writer.Write(" --> ");
+            writer.Write(TimeFormat.Srt(cue.End));
+            writer.Write('\n');
+            foreach (var line in cue.Lines)
+            {
+                writer.Write(line.Replace("\r", string.Empty, StringComparison.Ordinal).Replace('\n', ' '));
+                writer.Write('\n');
+            }
+
+            writer.Write('\n');
+        }
+    }
+}
+
+public sealed class VttWriter : ISubtitleWriter
+{
+    public SubtitleFormat Format => SubtitleFormat.Vtt;
+
+    public string Extension => ".vtt";
+
+    public void Write(TextWriter writer, SubtitleDocument document)
+    {
+        writer.Write("WEBVTT");
+        if (document.Language is { Length: > 0 } lang)
+        {
+            writer.Write("\nLanguage: ");
+            writer.Write(lang);
+        }
+
+        writer.Write("\n\n");
+        var index = 1;
+        foreach (var cue in document.Cues)
+        {
+            writer.Write(index++.ToString(CultureInfo.InvariantCulture));
+            writer.Write('\n');
+            writer.Write(TimeFormat.Vtt(cue.Start));
+            writer.Write(" --> ");
+            writer.Write(TimeFormat.Vtt(cue.End));
+            writer.Write('\n');
+            foreach (var line in cue.Lines)
+            {
+                writer.Write(Escape(line));
+                writer.Write('\n');
+            }
+
+            writer.Write('\n');
+        }
+    }
+
+    private static string Escape(string text) => text
+        .Replace("&", "&amp;", StringComparison.Ordinal)
+        .Replace("<", "&lt;", StringComparison.Ordinal)
+        .Replace(">", "&gt;", StringComparison.Ordinal);
+}
+
+public sealed class AssWriter : ISubtitleWriter
+{
+    public SubtitleFormat Format => SubtitleFormat.Ass;
+
+    public string Extension => ".ass";
+
+    public string FontName { get; init; } = "Arial";
+
+    public int FontSize { get; init; } = 52;
+
+    public int PlayResX { get; init; } = 1920;
+
+    public int PlayResY { get; init; } = 1080;
+
+    public void Write(TextWriter writer, SubtitleDocument document)
+    {
+        writer.Write("[Script Info]\n");
+        writer.Write($"; Generated by Bwl.Murching\nTitle: {document.Title ?? "Subtitles"}\nScriptType: v4.00+\nWrapStyle: 0\nScaledBorderAndShadow: yes\nYCbCr Matrix: TV.709\n");
+        writer.Write(string.Create(CultureInfo.InvariantCulture, $"PlayResX: {PlayResX}\nPlayResY: {PlayResY}\n\n"));
+        writer.Write("[V4+ Styles]\n");
+        writer.Write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
+        writer.Write(string.Create(CultureInfo.InvariantCulture, $"Style: Default,{FontName},{FontSize},&H00FFFFFF,&H000000FF,&H00101010,&H80000000,0,0,0,0,100,100,0,0,1,2.5,1,2,60,60,50,1\n\n"));
+        writer.Write("[Events]\n");
+        writer.Write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+        foreach (var cue in document.Cues)
+        {
+            var text = string.Join("\\N", cue.Lines.Select(Escape));
+            writer.Write($"Dialogue: 0,{TimeFormat.Ass(cue.Start)},{TimeFormat.Ass(cue.End)},Default,,0,0,0,,{text}\n");
+        }
+    }
+
+    private static string Escape(string text) => text
+        .Replace("{", "｛", StringComparison.Ordinal)
+        .Replace("}", "｝", StringComparison.Ordinal)
+        .Replace("\n", " ", StringComparison.Ordinal);
+}
+
+/// <summary>Plain text, one cue per line — useful for reading or feeding into a translator.</summary>
+public sealed class TxtWriter : ISubtitleWriter
+{
+    public SubtitleFormat Format => SubtitleFormat.Txt;
+
+    public string Extension => ".txt";
+
+    public void Write(TextWriter writer, SubtitleDocument document)
+    {
+        foreach (var cue in document.Cues)
+        {
+            writer.Write(string.Join(' ', cue.Lines));
+            writer.Write('\n');
+        }
+    }
+}

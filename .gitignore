@@ -1,0 +1,29 @@
+# Build
+bin/
+obj/
+*.user
+*.suo
+.vs/
+.idea/
+*.swp
+TestResults/
+
+# Downloaded tools and models (large binaries)
+/tools/
+/models/
+*.bin
+*.onnx
+
+# Test media (fetch with scripts/fetch-samples.ps1)
+samples/*
+!samples/README.md
+!samples/expected/
+
+# Outputs
+out/
+*.srt
+*.vtt
+*.ass
+!tests/**/*.srt
+!tests/**/*.vtt
+!samples/expected/*

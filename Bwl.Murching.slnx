@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bwl.Murching.Cli/Bwl.Murching.Cli.csproj" />
+    <Project Path="src/Bwl.Murching.Core/Bwl.Murching.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bwl.Murching.Tests/Bwl.Murching.Tests.csproj" />
+  </Folder>
+</Solution>
