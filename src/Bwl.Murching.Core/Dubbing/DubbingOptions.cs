@@ -13,10 +13,17 @@ public sealed record DubbingOptions
     /// <summary>Output video; default <c>&lt;name&gt;.dub.&lt;lang&gt;.mp4</c> next to the input.</summary>
     public string? OutputPath { get; init; }
 
-    /// <summary>TTS engine served by scripts/tts_worker.py: <c>xtts</c> (XTTS-v2) or <c>chatterbox</c>.</summary>
-    public string Engine { get; init; } = "xtts";
+    /// <summary>TTS engine: <c>qwen</c> (Qwen3-TTS via ONNX Runtime, no Python), <c>xtts</c> (XTTS-v2) or <c>chatterbox</c> (Python sidecar).</summary>
+    public string Engine { get; init; } = "qwen";
 
-    public string Device { get; init; } = "cuda";
+    /// <summary><c>cuda</c>, <c>dml</c> (DirectML, any Windows GPU; qwen only) or <c>cpu</c>.</summary>
+    public string Device { get; init; } = "dml";
+
+    /// <summary>Clone the original speaker (default) or use a preset voice (<see cref="Voice"/>).</summary>
+    public bool CloneVoice { get; init; } = true;
+
+    /// <summary>Preset voice name for engines/modes without cloning.</summary>
+    public string? Voice { get; init; }
 
     /// <summary>Python interpreter of the TTS virtual environment; null = auto-detect (tools/tts-venv, %LOCALAPPDATA%).</summary>
     public string? PythonPath { get; init; }

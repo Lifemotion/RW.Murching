@@ -15,8 +15,10 @@ internal static class DubCommand
         var to = new Option<string>("--to") { Description = "Target language (ISO 639-1), e.g. ru.", Required = true };
         var subs = new Option<FileInfo?>("--subs") { Description = "Translated subtitles (.srt/.vtt) to voice. Default: transcribe + translate first." };
         var output = new Option<string?>("--output", "-o") { Description = "Output video. Default: <name>.dub.<lang>.<ext>." };
-        var engine = new Option<string>("--engine") { Description = "TTS engine: xtts (XTTS-v2, voice cloning, 17 languages) or chatterbox.", DefaultValueFactory = _ => "xtts" }.AcceptOnlyFromAmong("xtts", "chatterbox");
-        var device = new Option<string>("--device", "-d") { Description = "cuda or cpu for the TTS model.", DefaultValueFactory = _ => "cuda" };
+        var engine = new Option<string>("--engine") { Description = "TTS engine: qwen (Qwen3-TTS via ONNX Runtime, no Python, cloning + preset voices), xtts (XTTS-v2, Python sidecar) or chatterbox.", DefaultValueFactory = _ => "qwen" }.AcceptOnlyFromAmong("qwen", "xtts", "chatterbox");
+        var device = new Option<string>("--device", "-d") { Description = "dml (DirectML, any Windows GPU; qwen only), cuda or cpu.", DefaultValueFactory = _ => "dml" };
+        var noClone = new Option<bool>("--no-clone") { Description = "Do not clone the original speaker; use a preset voice (see --voice)." };
+        var voice = new Option<string?>("--voice") { Description = "Preset voice for --no-clone (qwen: ryan, serena, vivian, aiden, eric, dylan, uncle_fu, ono_anna, sohee)." };
         var python = new Option<string?>("--python") { Description = "python.exe of the TTS venv (default: tools/tts-venv or MURCH_TTS_PYTHON)." };
         var duck = new Option<double>("--duck") { Description = "Gain of the original while the dub speaks (0..1).", DefaultValueFactory = _ => 0.2 };
         var voiceGain = new Option<double>("--voice-gain") { Description = "Dub loudness relative to the original speech.", DefaultValueFactory = _ => 1.0 };
@@ -26,7 +28,7 @@ internal static class DubCommand
 
         var command = new Command("dub", "Re-voice a video in another language with the original speaker's cloned voice.")
         {
-            input, to, subs, output, engine, device, python, duck, voiceGain, maxSpeed, keepOriginal, workDir,
+            input, to, subs, output, engine, device, noClone, voice, python, duck, voiceGain, maxSpeed, keepOriginal, workDir,
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -44,6 +46,8 @@ internal static class DubCommand
                 OutputPath = parseResult.GetValue(output),
                 Engine = parseResult.GetValue(engine)!,
                 Device = parseResult.GetValue(device)!,
+                CloneVoice = !parseResult.GetValue(noClone),
+                Voice = parseResult.GetValue(voice),
                 PythonPath = parseResult.GetValue(python),
                 Duck = Math.Clamp(parseResult.GetValue(duck), 0, 1),
                 VoiceGain = parseResult.GetValue(voiceGain),

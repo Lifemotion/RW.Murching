@@ -10,6 +10,11 @@
     <PackageVersion Include="Whisper.net.Runtime.Cuda" Version="1.9.1" />
     <!-- VAD / TTS / diarization: sherpa-onnx -->
     <PackageVersion Include="org.k2fsa.sherpa.onnx" Version="1.13.8" />
+    <!-- TTS without Python: Qwen3-TTS through ONNX Runtime -->
+    <PackageVersion Include="ElBruno.QwenTTS" Version="1.10.0" />
+    <PackageVersion Include="ElBruno.QwenTTS.VoiceCloning" Version="1.10.0" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
     <!-- Infrastructure -->
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.0" />

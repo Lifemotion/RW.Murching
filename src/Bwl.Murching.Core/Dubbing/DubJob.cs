@@ -64,11 +64,6 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
             throw new InvalidOperationException("The input has no audio track.");
         }
 
-        var python = TtsSidecar.FindPython(options.PythonPath)
-                     ?? throw new InvalidOperationException("TTS environment not found. Create it with scripts/setup-tts.ps1 (Python 3.10–3.12 venv with torch + coqui-tts) or point MURCH_TTS_PYTHON at its python.exe.");
-        var worker = TtsSidecar.FindWorkerScript()
-                     ?? throw new InvalidOperationException("scripts/tts_worker.py not found next to the application or in the repository.");
-
         var workDir = options.WorkDir ?? Path.Combine(AppPaths.EnsureDirectory(AppPaths.TempDir), "dub-" + Path.GetFileNameWithoutExtension(input) + "-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(workDir);
         _logger.LogInformation("Work directory: {Dir}", workDir);
@@ -113,10 +108,15 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
         _logger.LogInformation("Decoded original: {Duration} stereo @ {Rate} Hz", TimeFormat.Human(original.Duration), original.SampleRate);
         Report(DubStage.DecodeAudio, 1);
 
-        // 3. TTS worker ---------------------------------------------------------------------------------------------
+        // 3. TTS engine ---------------------------------------------------------------------------------------------
         Report(DubStage.StartTts, 0, options.Engine);
-        await using var tts = await TtsSidecar.StartAsync(python, worker, options.Engine, options.Device, _logger, ct).ConfigureAwait(false);
-        Report(DubStage.StartTts, 1, $"{tts.Engine} on {tts.Device}");
+        await using var tts = await CreateEngineAsync(options, _logger, new SyncProgress<string>(m => Report(DubStage.StartTts, 0, m)), ct).ConfigureAwait(false);
+        Report(DubStage.StartTts, 1, tts.Description);
+        _logger.LogInformation("TTS: {Description}", tts.Description);
+        if (options.CloneVoice && !tts.SupportsVoiceCloning)
+        {
+            _logger.LogWarning("Engine {Engine} cannot clone voices; using preset voice {Voice}", tts.Name, options.Voice ?? "(default)");
+        }
 
         // 4. Synthesise, fit, place ---------------------------------------------------------------------------------
         var voice = new float[original.Frames];
@@ -138,7 +138,16 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
 
             var clipPath = Path.Combine(workDir, $"tts-{unit.Index:0000}.wav");
             var speed = 1.0;
-            var result = await tts.SynthesizeAsync(unit.Text, options.TargetLanguage, refPath, clipPath, speed, ct).ConfigureAwait(false);
+            var request = new TtsRequest
+            {
+                Text = unit.Text,
+                Language = options.TargetLanguage,
+                ReferenceWav = options.CloneVoice ? refPath : null,
+                Voice = options.Voice,
+                Speed = speed,
+                OutputWav = clipPath,
+            };
+            var result = await tts.SynthesizeAsync(request, ct).ConfigureAwait(false);
             if (!result.Ok)
             {
                 _logger.LogWarning("Utterance {Index} failed: {Error}", unit.Index, result.Error);
@@ -146,11 +155,11 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
             }
 
             var fit = DurationFitter.Compute(result.Duration, unit, options);
-            if (fit.Tempo > options.ResynthesizeAbove)
+            if (fit.Tempo > options.ResynthesizeAbove && tts.SupportsSpeed)
             {
                 // Ask the model to speak faster first: natural rate change beats time-stretching.
                 speed = Math.Min(1.3, fit.Tempo);
-                var faster = await tts.SynthesizeAsync(unit.Text, options.TargetLanguage, refPath, clipPath, speed, ct).ConfigureAwait(false);
+                var faster = await tts.SynthesizeAsync(request with { Speed = speed }, ct).ConfigureAwait(false);
                 if (faster.Ok)
                 {
                     result = faster;
@@ -221,7 +230,7 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
             input,
             output,
             language = options.TargetLanguage,
-            engine = tts.Engine,
+            engine = tts.Name,
             units = reports.Select(r => new { r.Index, start = r.Start.TotalSeconds, end = r.End.TotalSeconds, r.Text, tts = r.Synthesized.TotalSeconds, r.Tempo, r.Speed, r.Overrun }),
         }, new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping }), ct).ConfigureAwait(false);
 
@@ -239,7 +248,23 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
 
         Report(DubStage.Done, 1);
         _logger.LogInformation("Dubbed video: {Output} ({Units} utterances, {Overruns} overruns, drift {Drift})", output, reports.Count, overruns, TimeFormat.Human(drift));
-        return new DubResult(Path.GetFullPath(output), scriptPath, reports, total.Elapsed, tts.Engine, overruns, drift);
+        return new DubResult(Path.GetFullPath(output), scriptPath, reports, total.Elapsed, tts.Description, overruns, drift);
+    }
+
+    private static async Task<ITtsEngine> CreateEngineAsync(DubbingOptions options, ILogger logger, IProgress<string> progress, CancellationToken ct)
+    {
+        switch (options.Engine.ToLowerInvariant())
+        {
+            case "qwen":
+            case "qwen3":
+                return await QwenTtsEngine.CreateAsync(options.CloneVoice, options.Device, logger, progress, ct).ConfigureAwait(false);
+            case "xtts":
+            case "chatterbox":
+                var device = options.Device.Equals("dml", StringComparison.OrdinalIgnoreCase) ? "cuda" : options.Device;
+                return await SidecarTtsEngine.StartAsync(options.Engine.ToLowerInvariant(), device, options.PythonPath, logger, ct).ConfigureAwait(false);
+            default:
+                throw new ArgumentException($"Unknown TTS engine '{options.Engine}'. Use qwen, xtts or chatterbox.");
+        }
     }
 
     private static string DefaultContainer(string input)
