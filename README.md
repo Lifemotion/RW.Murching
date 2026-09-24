@@ -31,6 +31,7 @@ ffmpeg ──► 16 kHz mono PCM ──► Silero VAD ──► speech chunks (�
 
 * **ASR**: [Whisper.net](https://github.com/sandrohanea/whisper.net) (whisper.cpp) with the `large-v3-turbo` GGML model by default; CUDA 13 build on NVIDIA GPUs, CPU fallback.
 * **VAD**: Silero v5 through whisper.cpp — the model only ever sees speech, which kills most "Thanks for watching" hallucinations, and long silences never reach the decoder.
+* **Music fallback**: Silero ignores singing, rap over a beat and vocoded voices. Energetic gaps between speech chunks (RMS above −40 dBFS, ≥3 s) are transcribed anyway as *tentative* chunks and pass a strict filter (≥3 words, mean token probability ≥0.75, no repeated lines, no n-gram loops, no stock phrases like "I'm going to go"). Each tentative chunk is first run through Whisper's language detection and dropped unless it agrees with the file language (p ≥ 0.5): chanting, foreign choruses and pure music yield random low-probability languages, while real lyrics come back in the right language. Disable with `--no-music-fallback`.
 * **Word timing**: token timestamps with DTW alignment (per-model alignment heads); words are re-assembled from byte-level BPE tokens with the segment text as ground truth (Cyrillic safe).
 * **Cue building**: minimum-cost segmentation over words — prefers sentence ends, clause punctuation, Whisper segment ends and pauses; balanced two-line wrapping that breaks at punctuation and never strands an article/preposition; reading-speed aware display times with a minimum gap between cues.
 * **ffmpeg** is downloaded on demand (BtbN portable build) if not on `PATH`.
@@ -66,6 +67,10 @@ Notes:
 * `large-v3-turbo` was distilled for transcription and mostly ignores `--translate`; pick `large-v3` or `medium` for Whisper's built-in translation to English.
 * `--json` writes `<name>.<lang>.murch.json` with segments and word timings; `murch cues` rebuilds subtitles from it in milliseconds, which is the fast way to tune `--max-line-length`, `--cps`, `--pause-split`.
 * Music-heavy material: try `--vad-threshold 0.35` (default 0.5) so quiet speech over music is not skipped.
+
+## Verifying against a cloud reference
+
+`scripts/verify-elevenlabs.py` uploads the extracted audio to ElevenLabs Scribe, caches the response as `<name>.eleven.json` and prints WER plus median word-onset offset between the two transcripts (`set ELEVENLABS_API_KEY=...` first; the key never goes into the repo). On a mixed bag of 13 clips (documentary, game dialogue, Twitter rants, rap, Russian songs) clean speech came out at 2–3.5% WER against Scribe with a ~70 ms onset offset; music-mixed clips were where the VAD-only pipeline lost words, which is what the music fallback addresses.
 
 ## Roadmap
 

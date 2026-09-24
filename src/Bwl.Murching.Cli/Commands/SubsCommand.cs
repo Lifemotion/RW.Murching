@@ -39,6 +39,7 @@ internal static class SubsCommand
         var noVad = new Option<bool>("--no-vad") { Description = "Disable voice activity detection (feed the whole file to whisper)." };
         var vadThreshold = new Option<float>("--vad-threshold") { Description = "Speech probability threshold for the VAD (lower catches quiet speech over music).", DefaultValueFactory = _ => 0.5f };
         var vadMinSilence = new Option<int>("--vad-min-silence") { Description = "Silence (ms) that ends a speech segment.", DefaultValueFactory = _ => 300 };
+        var noFallback = new Option<bool>("--no-music-fallback") { Description = "Do not transcribe energetic non-speech regions (singing, rap over music) that the VAD rejected." };
         var noDtw = new Option<bool>("--no-dtw") { Description = "Disable DTW token alignment (faster, coarser word timing)." };
         var noFilter = new Option<bool>("--no-filter") { Description = "Disable the hallucination filter." };
         var maxLineLength = new Option<int>("--max-line-length") { Description = "Characters per subtitle line.", DefaultValueFactory = _ => 42 };
@@ -55,7 +56,7 @@ internal static class SubsCommand
         var command = new Command("subs", "Transcribe speech and write subtitles.")
         {
             input, output, format, model, language, translate, device, threads, beam, prompt, context,
-            noVad, vadThreshold, vadMinSilence, noDtw, noFilter, maxLineLength, maxLines, maxDuration, cps, json, embed, stream, from, to, preview,
+            noVad, vadThreshold, vadMinSilence, noFallback, noDtw, noFilter, maxLineLength, maxLines, maxDuration, cps, json, embed, stream, from, to, preview,
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -108,6 +109,7 @@ internal static class SubsCommand
                     MaxCharsPerSecond = parseResult.GetValue(cps),
                 },
                 Hallucinations = new HallucinationFilterOptions { Enabled = !parseResult.GetValue(noFilter) },
+                Fallback = new FallbackOptions { Enabled = !parseResult.GetValue(noFallback) },
                 AudioStreamIndex = parseResult.GetValue(stream),
                 Start = ParseTime(parseResult.GetValue(from)),
                 End = ParseTime(parseResult.GetValue(to)),
@@ -213,7 +215,7 @@ internal static class SubsCommand
         table.AddRow("Input", Markup.Escape(Path.GetFileName(r.Media.Path)) + $" [grey]({TimeFormat.Human(r.Media.Duration)}, {r.Media.Format})[/]");
         table.AddRow("Language", r.Language + (r.LanguageProbability is { } p ? $" [grey]({p:P0})[/]" : string.Empty));
         table.AddRow("Engine", Markup.Escape(r.RuntimeDescription));
-        table.AddRow("Speech", $"{TimeFormat.Human(r.SpeechDuration)} in {r.ChunkCount} chunk(s)");
+        table.AddRow("Speech", $"{TimeFormat.Human(r.SpeechDuration)} in {r.ChunkCount} chunk(s)" + (r.TentativeChunkCount > 0 ? $" [grey]+ {TimeFormat.Human(r.TentativeDuration)} of music/uncertain audio in {r.TentativeChunkCount} region(s)[/]" : string.Empty));
         table.AddRow("Result", $"{r.Transcript.Segments.Count} segments, {r.Transcript.Words.Count()} words → {r.Document.Cues.Count} cues");
         table.AddRow("Time", $"{TimeFormat.Human(r.Elapsed)} [grey]({r.RealTimeFactor:0.0}× real time; {StageBreakdown(r)})[/]");
         foreach (var path in r.OutputPaths)

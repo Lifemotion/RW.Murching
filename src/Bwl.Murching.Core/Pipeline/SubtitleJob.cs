@@ -23,7 +23,9 @@ public sealed record SubtitleJobResult(
     float? LanguageProbability,
     string RuntimeDescription,
     int ChunkCount,
+    int TentativeChunkCount,
     TimeSpan SpeechDuration,
+    TimeSpan TentativeDuration,
     TimeSpan Elapsed,
     IReadOnlyDictionary<JobStage, TimeSpan> StageTimings)
 {
@@ -130,6 +132,28 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
 
         var speechDuration = TimeSpan.FromTicks(chunks.Sum(c => c.Duration.Ticks));
 
+        // 5b. Music / singing fallback: energetic gaps the VAD rejected go to Whisper as tentative chunks.
+        IReadOnlyList<SpeechSegment> tentative = [];
+        if (options.UseVad && vadPath is not null && options.Fallback.Enabled)
+        {
+            tentative = FallbackRegions.Find(audio, chunks, options.Fallback);
+            if (tentative.Count > 0)
+            {
+                _logger.LogInformation("Fallback: {Count} energetic non-speech region(s) ({Duration}) will be transcribed tentatively", tentative.Count, TimeFormat.Human(TimeSpan.FromTicks(tentative.Sum(c => c.Duration.Ticks))));
+                foreach (var region in tentative)
+                {
+                    _logger.LogDebug("tentative {Chunk} ({Duration})", region, TimeFormat.Human(region.Duration));
+                }
+            }
+        }
+
+        var tentativeDuration = TimeSpan.FromTicks(tentative.Sum(c => c.Duration.Ticks));
+        var work = chunks.Select(c => (Chunk: c, Tentative: false))
+            .Concat(tentative.Select(c => (Chunk: c, Tentative: true)))
+            .OrderBy(w => w.Chunk.Start)
+            .ToList();
+        var workDuration = speechDuration + tentativeDuration;
+
         if (options.Asr.TranslateToEnglish && whisperSpec.Name.Contains("turbo", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("{Model} was distilled for transcription only and usually ignores the translate task; use large-v3 or medium for --translate.", whisperSpec.Name);
@@ -154,10 +178,10 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
             {
                 language = "en";
             }
-            else if (chunks.Count > 0)
+            else if (work.Count > 0)
             {
                 Enter(JobStage.DetectLanguage);
-                var probe = chunks.OrderByDescending(c => c.Duration).First();
+                var probe = (chunks.Count > 0 ? chunks : tentative).OrderByDescending(c => c.Duration).First();
                 var detection = await recognizer.DetectLanguageAsync(audio.Slice(probe.Start, probe.End), ct).ConfigureAwait(false);
                 language = detection.Language;
                 languageProbability = detection.Probability;
@@ -172,32 +196,65 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
 
         // 8. Transcribe -----------------------------------------------------------------------------------------------
         Enter(JobStage.Transcribe);
-        var parts = new List<Transcript>(chunks.Count);
+        var parts = new List<Transcript>(work.Count);
         var processed = TimeSpan.Zero;
         string? context = null;
-        for (var i = 0; i < chunks.Count; i++)
+        var strict = HallucinationFilterOptions.Strict with { ExtraPhrases = options.Hallucinations.ExtraPhrases };
+        var skippedTentative = 0;
+        if (options.Fallback.Enabled && languageProbability is { } fileLanguageProbability && fileLanguageProbability < options.Fallback.UncertainFileLanguageProbability)
+        {
+            _logger.LogWarning("Language detection is unsure ({Language}, p={Probability:0.00}): every chunk is treated as tentative and filtered strictly", language, fileLanguageProbability);
+            work = work.Select(w => (w.Chunk, Tentative: true)).ToList();
+            tentative = work.Select(w => w.Chunk).ToList();
+        }
+
+        for (var i = 0; i < work.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
-            var chunk = chunks[i];
+            var (chunk, isTentative) = work[i];
             var clip = EnsureMinimumLength(audio.Slice(chunk.Start, chunk.End), MinWhisperClip);
             var chunkIndex = i;
+
+            if (isTentative && options.Fallback.RequireLanguageMatch && language != "und" && !whisperSpec.EnglishOnly)
+            {
+                var chunkLanguage = await recognizer.DetectLanguageAsync(clip, ct).ConfigureAwait(false);
+                if (!string.Equals(chunkLanguage.Language, language, StringComparison.OrdinalIgnoreCase) || chunkLanguage.Probability < options.Fallback.MinLanguageProbability)
+                {
+                    _logger.LogDebug("Skipped tentative chunk {Chunk}: sounds like {Lang} (p={P:0.00}), file language is {FileLang}", chunk, chunkLanguage.Language, chunkLanguage.Probability, language);
+                    skippedTentative++;
+                    processed += chunk.Duration;
+                    Report(workDuration > TimeSpan.Zero ? processed / workDuration : 1, $"chunk {i + 1}/{work.Count} (skipped: {chunkLanguage.Language})");
+                    continue;
+                }
+            }
+
             var chunkProgress = new SyncProgress<int>(p => Report(
-                (processed + chunk.Duration * (p / 100.0)) / speechDuration,
-                $"chunk {chunkIndex + 1}/{chunks.Count}"));
+                (processed + chunk.Duration * (p / 100.0)) / workDuration,
+                $"chunk {chunkIndex + 1}/{work.Count}{(isTentative ? " (music)" : string.Empty)}"));
 
             var part = await recognizer.TranscribeAsync(clip, new TranscribeRequest
             {
                 Offset = timeOffset + chunk.Start,
                 Language = language,
-                Prompt = options.Asr.ContextAcrossChunks ? context : null,
+                Prompt = options.Asr.ContextAcrossChunks && !isTentative ? context : null,
                 Progress = chunkProgress,
             }, ct).ConfigureAwait(false);
+
+            if (isTentative && options.Hallucinations.Enabled)
+            {
+                var rawCount = part.Segments.Count;
+                part = HallucinationFilter.Apply(part, strict, _logger);
+                if (rawCount != part.Segments.Count)
+                {
+                    _logger.LogDebug("Tentative chunk {Chunk}: kept {Kept}/{Total} segment(s)", chunk, part.Segments.Count, rawCount);
+                }
+            }
 
             parts.Add(part);
             processed += chunk.Duration;
             var last = part.Segments.Count > 0 ? part.Segments[^1].Text : null;
-            Report(speechDuration > TimeSpan.Zero ? processed / speechDuration : 1, last is null ? $"chunk {i + 1}/{chunks.Count}" : Truncate(last, 60));
-            if (options.Asr.ContextAcrossChunks)
+            Report(workDuration > TimeSpan.Zero ? processed / workDuration : 1, last is null ? $"chunk {i + 1}/{work.Count}" : Truncate(last, 60));
+            if (options.Asr.ContextAcrossChunks && !isTentative)
             {
                 context = Tail(part.Text, 200);
             }
@@ -206,6 +263,11 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
             {
                 _logger.LogDebug("{Segment}", segment);
             }
+        }
+
+        if (skippedTentative > 0)
+        {
+            _logger.LogInformation("Skipped {Skipped}/{Total} tentative region(s) whose language did not match {Language}", skippedTentative, tentative.Count, language);
         }
 
         var transcriptLanguage = options.Asr.TranslateToEnglish ? "en" : language;
@@ -292,7 +354,9 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
             languageProbability,
             recognizer.RuntimeDescription,
             chunks.Count,
+            tentative.Count,
             speechDuration,
+            tentativeDuration,
             total.Elapsed,
             timings);
     }

@@ -21,6 +21,9 @@ public sealed record SubtitleJobOptions
 
     public ChunkingOptions Chunking { get; init; } = new();
 
+    /// <summary>Send energetic non-speech regions (music, singing) to Whisper as tentative chunks with strict filtering.</summary>
+    public FallbackOptions Fallback { get; init; } = new();
+
     public CueBuilderOptions Cues { get; init; } = new();
 
     public HallucinationFilterOptions Hallucinations { get; init; } = new();
