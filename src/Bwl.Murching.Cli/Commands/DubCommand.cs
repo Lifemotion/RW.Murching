@@ -21,12 +21,12 @@ internal static class DubCommand
         var duck = new Option<double>("--duck") { Description = "Gain of the original while the dub speaks (0..1).", DefaultValueFactory = _ => 0.2 };
         var voiceGain = new Option<double>("--voice-gain") { Description = "Dub loudness relative to the original speech.", DefaultValueFactory = _ => 1.0 };
         var maxSpeed = new Option<double>("--max-speedup") { Description = "Maximum tempo factor to fit a slot.", DefaultValueFactory = _ => 1.35 };
-        var noOriginal = new Option<bool>("--no-original-track") { Description = "Do not keep the original audio as a second track." };
+        var keepOriginal = new Option<bool>("--keep-original-track") { Description = "Also keep the original audio as a second (non-default) track. Off by default: many players ignore the default flag and would play the original." };
         var workDir = new Option<string?>("--work-dir") { Description = "Keep intermediate WAVs here." };
 
         var command = new Command("dub", "Re-voice a video in another language with the original speaker's cloned voice.")
         {
-            input, to, subs, output, engine, device, python, duck, voiceGain, maxSpeed, noOriginal, workDir,
+            input, to, subs, output, engine, device, python, duck, voiceGain, maxSpeed, keepOriginal, workDir,
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -48,7 +48,7 @@ internal static class DubCommand
                 Duck = Math.Clamp(parseResult.GetValue(duck), 0, 1),
                 VoiceGain = parseResult.GetValue(voiceGain),
                 MaxSpeedUp = Math.Max(1.0, parseResult.GetValue(maxSpeed)),
-                KeepOriginalTrack = !parseResult.GetValue(noOriginal),
+                KeepOriginalTrack = parseResult.GetValue(keepOriginal),
                 WorkDir = parseResult.GetValue(workDir),
                 KeepWorkFiles = parseResult.GetValue(workDir) is not null,
             };

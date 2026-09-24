@@ -52,8 +52,11 @@ public sealed record DubbingOptions
     /// <summary>Dub loudness relative to the original speech it replaces (RMS ratio).</summary>
     public double VoiceGain { get; init; } = 1.0;
 
-    /// <summary>Keep the original audio as a second track in the output container.</summary>
-    public bool KeepOriginalTrack { get; init; } = true;
+    /// <summary>
+    /// Also keep the original audio as a second track. Off by default: many players (browsers, Windows apps) ignore
+    /// the "default" flag and play whichever track they like, so a shareable file should carry the dub alone.
+    /// </summary>
+    public bool KeepOriginalTrack { get; init; }
 
     /// <summary>Directory for per-utterance WAVs and the dubbing script; default a temp folder, removed unless <see cref="KeepWorkFiles"/>.</summary>
     public string? WorkDir { get; init; }
