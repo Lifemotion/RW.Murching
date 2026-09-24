@@ -16,8 +16,8 @@ public sealed record DubbingOptions
     /// <summary>TTS engine: <c>qwen</c> (Qwen3-TTS via ONNX Runtime, no Python), <c>xtts</c> (XTTS-v2) or <c>chatterbox</c> (Python sidecar).</summary>
     public string Engine { get; init; } = "qwen";
 
-    /// <summary><c>cuda</c>, <c>dml</c> (DirectML, any Windows GPU; qwen only) or <c>cpu</c>.</summary>
-    public string Device { get; init; } = "dml";
+    /// <summary><c>auto</c> (CUDA when its libraries are present, else CPU), <c>cuda</c> or <c>cpu</c>.</summary>
+    public string Device { get; init; } = "auto";
 
     /// <summary>Clone the original speaker (default) or use a preset voice (<see cref="Voice"/>).</summary>
     public bool CloneVoice { get; init; } = true;

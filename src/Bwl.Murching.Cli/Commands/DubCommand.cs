@@ -16,7 +16,7 @@ internal static class DubCommand
         var subs = new Option<FileInfo?>("--subs") { Description = "Translated subtitles (.srt/.vtt) to voice. Default: transcribe + translate first." };
         var output = new Option<string?>("--output", "-o") { Description = "Output video. Default: <name>.dub.<lang>.<ext>." };
         var engine = new Option<string>("--engine") { Description = "TTS engine: qwen (Qwen3-TTS via ONNX Runtime, no Python, cloning + preset voices), xtts (XTTS-v2, Python sidecar) or chatterbox.", DefaultValueFactory = _ => "qwen" }.AcceptOnlyFromAmong("qwen", "xtts", "chatterbox");
-        var device = new Option<string>("--device", "-d") { Description = "dml (DirectML, any Windows GPU; qwen only), cuda or cpu.", DefaultValueFactory = _ => "dml" };
+        var device = new Option<string>("--device", "-d") { Description = "auto (CUDA when available), cuda or cpu.", DefaultValueFactory = _ => "auto" }.AcceptOnlyFromAmong("auto", "cuda", "cpu");
         var noClone = new Option<bool>("--no-clone") { Description = "Do not clone the original speaker; use a preset voice (see --voice)." };
         var voice = new Option<string?>("--voice") { Description = "Preset voice for --no-clone (qwen: ryan, serena, vivian, aiden, eric, dylan, uncle_fu, ono_anna, sohee)." };
         var python = new Option<string?>("--python") { Description = "python.exe of the TTS venv (default: tools/tts-venv or MURCH_TTS_PYTHON)." };

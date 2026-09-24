@@ -39,7 +39,9 @@ internal static class DoctorCommand
             table.AddRow("NVIDIA driver", driver ? "[green]ok[/]" : "[yellow]not found[/]", driver ? "nvcuda.dll loads" : "CPU inference only");
 
             var cudaDir = CudaRuntime.FindDirectory();
-            table.AddRow("CUDA 13 libraries", cudaDir is null ? (driver ? "[yellow]missing[/]" : "[grey]n/a[/]") : "[green]ok[/]", Markup.Escape(cudaDir ?? "run 'murch setup --cuda'"));
+            table.AddRow("CUDA 13 libraries (whisper)", cudaDir is null ? (driver ? "[yellow]missing[/]" : "[grey]n/a[/]") : "[green]ok[/]", Markup.Escape(cudaDir ?? "run 'murch setup --cuda'"));
+            var cuda12Dir = CudaRuntime.FindOnnxDirectory();
+            table.AddRow("CUDA 12 + cuDNN 9 (Qwen3-TTS)", cuda12Dir is null ? (driver ? "[yellow]missing[/]" : "[grey]n/a[/]") : "[green]ok[/]", Markup.Escape(cuda12Dir ?? "run 'murch setup --cuda'; TTS falls back to CPU"));
 
             string runtime;
             try

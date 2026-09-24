@@ -260,7 +260,7 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
                 return await QwenTtsEngine.CreateAsync(options.CloneVoice, options.Device, logger, progress, ct).ConfigureAwait(false);
             case "xtts":
             case "chatterbox":
-                var device = options.Device.Equals("dml", StringComparison.OrdinalIgnoreCase) ? "cuda" : options.Device;
+                var device = options.Device.Equals("auto", StringComparison.OrdinalIgnoreCase) ? "cuda" : options.Device;
                 return await SidecarTtsEngine.StartAsync(options.Engine.ToLowerInvariant(), device, options.PythonPath, logger, ct).ConfigureAwait(false);
             default:
                 throw new ArgumentException($"Unknown TTS engine '{options.Engine}'. Use qwen, xtts or chatterbox.");

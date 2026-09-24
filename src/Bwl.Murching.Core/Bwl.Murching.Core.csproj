@@ -16,9 +16,9 @@
     <PackageReference Include="Whisper.net.Runtime.Cuda" />
     <PackageReference Include="ElBruno.QwenTTS" />
     <PackageReference Include="ElBruno.QwenTTS.VoiceCloning" />
-    <!-- The CPU-only onnxruntime.dll from the transitive dependency would clash with the DirectML build (which also contains the CPU provider). -->
+    <!-- The CPU-only onnxruntime.dll from the transitive dependency would clash with the CUDA build (which also contains the CPU provider). -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" ExcludeAssets="native" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 

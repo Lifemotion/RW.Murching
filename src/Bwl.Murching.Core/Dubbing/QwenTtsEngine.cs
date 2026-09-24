@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Bwl.Murching.Audio;
+using Bwl.Murching.Runtime;
 using ElBruno.QwenTTS.Pipeline;
 using ElBruno.QwenTTS.VoiceCloning.Pipeline;
 using Microsoft.Extensions.Logging;
@@ -49,17 +50,28 @@ public sealed class QwenTtsEngine : ITtsEngine
 
     /// <summary>
     /// Loads the cloning model, or the preset-voice model when <paramref name="cloning"/> is false.
-    /// <paramref name="device"/>: <c>cuda</c>, <c>dml</c> (DirectML, any Windows GPU) or <c>cpu</c>.
+    /// <paramref name="device"/>: <c>cuda</c> (needs the CUDA 12 / cuDNN 9 libraries, see <c>murch setup --cuda</c>), <c>auto</c> or <c>cpu</c>.
     /// </summary>
     public static async Task<QwenTtsEngine> CreateAsync(bool cloning, string device, ILogger? logger = null, IProgress<string>? progress = null, CancellationToken ct = default)
     {
         logger ??= NullLogger.Instance;
-        var provider = device.ToLowerInvariant() switch
+        var wantCuda = device.Equals("cuda", StringComparison.OrdinalIgnoreCase) || device.Equals("auto", StringComparison.OrdinalIgnoreCase) || device.Equals("dml", StringComparison.OrdinalIgnoreCase);
+        var provider = ExecutionProvider.Cpu;
+        if (wantCuda)
         {
-            "cuda" => ExecutionProvider.Cuda,
-            "dml" or "directml" => ExecutionProvider.DirectML,
-            _ => ExecutionProvider.Cpu,
-        };
+            if (CudaRuntime.HasNvidiaDriver() && CudaRuntime.PrepareForOnnxRuntime(logger))
+            {
+                provider = ExecutionProvider.Cuda;
+            }
+            else if (device.Equals("cuda", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("CUDA requested for Qwen3-TTS but the CUDA 12 / cuDNN 9 libraries were not found. Run 'murch setup --cuda' (downloads ~2.7 GB) or use --device cpu.");
+            }
+            else
+            {
+                logger.LogWarning("CUDA 12 / cuDNN 9 libraries not found; Qwen3-TTS runs on the CPU (slow). Run 'murch setup --cuda'.");
+            }
+        }
 
         Func<SessionOptions> factory = provider switch
         {
@@ -86,7 +98,7 @@ public sealed class QwenTtsEngine : ITtsEngine
         }
         catch (Exception ex) when (provider != ExecutionProvider.Cpu && ex is OnnxRuntimeException or DllNotFoundException or EntryPointNotFoundException)
         {
-            throw new InvalidOperationException($"ONNX Runtime could not use the {provider} execution provider: {ex.Message}. Try --device cpu or --device dml.", ex);
+            throw new InvalidOperationException($"ONNX Runtime could not use the {provider} execution provider: {ex.Message}. Check 'murch doctor' or try --device cpu.", ex);
         }
     }
 

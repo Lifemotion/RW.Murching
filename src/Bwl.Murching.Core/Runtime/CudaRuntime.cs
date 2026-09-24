@@ -16,9 +16,14 @@ public static partial class CudaRuntime
 {
     public static readonly string[] RequiredLibraries = ["cudart64_13.dll", "cublas64_13.dll", "cublasLt64_13.dll"];
 
+    /// <summary>ONNX Runtime 1.2x is built against CUDA 12 + cuDNN 9, a different set from whisper.cpp's CUDA 13.</summary>
+    public static readonly string[] RequiredOnnxLibraries = ["cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll", "cufft64_11.dll", "curand64_10.dll", "cudnn64_9.dll"];
+
     private static readonly Lock Gate = new();
     private static bool _prepared;
     private static string? _directory;
+    private static bool _onnxPrepared;
+    private static string? _onnxDirectory;
 
     /// <summary>Directory that <see cref="Prepare"/> registered, or null when CUDA libraries were not found.</summary>
     public static string? ResolvedDirectory => _directory;
@@ -49,6 +54,80 @@ public static partial class CudaRuntime
     /// <summary>First candidate directory that contains every required library.</summary>
     public static string? FindDirectory() =>
         CandidateDirectories().FirstOrDefault(dir => RequiredLibraries.All(lib => File.Exists(Path.Combine(dir, lib))));
+
+    public static IEnumerable<string> CandidateOnnxDirectories()
+    {
+        if (Environment.GetEnvironmentVariable("MURCH_CUDA12_DIR") is { Length: > 0 } env)
+        {
+            yield return env;
+        }
+
+        yield return Path.Combine(AppContext.BaseDirectory, "cuda12");
+        yield return Path.Combine(AppPaths.DataRoot, "cuda12");
+        if (AppPaths.ToolsDir is { } tools)
+        {
+            yield return Path.Combine(tools, "cuda12");
+        }
+
+        if (Environment.GetEnvironmentVariable("CUDA_PATH_V12_8") is { Length: > 0 } cp)
+        {
+            yield return Path.Combine(cp, "bin");
+        }
+    }
+
+    public static string? FindOnnxDirectory() =>
+        CandidateOnnxDirectories().FirstOrDefault(dir => RequiredOnnxLibraries.All(lib => File.Exists(Path.Combine(dir, lib))));
+
+    public static string? ResolvedOnnxDirectory => _onnxDirectory;
+
+    /// <summary>Registers the CUDA 12 / cuDNN 9 folder used by the ONNX Runtime CUDA execution provider. Returns true when found.</summary>
+    public static bool PrepareForOnnxRuntime(ILogger? logger = null)
+    {
+        lock (Gate)
+        {
+            if (_onnxPrepared)
+            {
+                return _onnxDirectory is not null;
+            }
+
+            _onnxPrepared = true;
+            if (!OperatingSystem.IsWindows())
+            {
+                return false;
+            }
+
+            _onnxDirectory = FindOnnxDirectory();
+            if (_onnxDirectory is null)
+            {
+                logger?.LogDebug("CUDA 12 / cuDNN 9 libraries ({Libs}) not found in: {Dirs}", string.Join(", ", RequiredOnnxLibraries), string.Join("; ", CandidateOnnxDirectories()));
+                return false;
+            }
+
+            _onnxDirectory = Path.GetFullPath(_onnxDirectory);
+            RegisterDirectory(_onnxDirectory, logger);
+            return true;
+        }
+    }
+
+    private static void RegisterDirectory(string directory, ILogger? logger)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        if (!path.Split(Path.PathSeparator).Contains(directory, StringComparer.OrdinalIgnoreCase))
+        {
+            Environment.SetEnvironmentVariable("PATH", directory + Path.PathSeparator + path);
+        }
+
+        try
+        {
+            _ = AddDllDirectory(directory);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogDebug(ex, "AddDllDirectory failed");
+        }
+
+        logger?.LogDebug("Registered native library directory: {Dir}", directory);
+    }
 
     /// <summary>True when an NVIDIA driver is installed (nvcuda.dll loads).</summary>
     public static bool HasNvidiaDriver()

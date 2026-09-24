@@ -13,7 +13,7 @@ internal static class SetupCommand
     public static Command Create()
     {
         var ffmpeg = new Option<bool>("--ffmpeg") { Description = "Download a portable ffmpeg build." };
-        var cuda = new Option<bool>("--cuda") { Description = "Download the CUDA 13 runtime libraries (cudart, cuBLAS; ~440 MB)." };
+        var cuda = new Option<bool>("--cuda") { Description = "Download the CUDA libraries: CUDA 13 set for whisper.cpp (~440 MB) and CUDA 12 + cuDNN 9 set for ONNX Runtime / Qwen3-TTS (~2.7 GB)." };
         var models = new Option<bool>("--models") { Description = $"Download the default models ({ModelCatalog.DefaultWhisperModel}, {ModelCatalog.DefaultVadModel})." };
         var model = new Option<string?>("--model") { Description = "Whisper model to download instead of the default." };
 
@@ -52,36 +52,25 @@ internal static class SetupCommand
                 {
                     AnsiConsole.MarkupLine("[yellow]No NVIDIA driver detected; skipping CUDA libraries.[/]");
                 }
-                else if (CudaRuntime.FindDirectory() is { } dir)
-                {
-                    AnsiConsole.MarkupLineInterpolated($"[green]CUDA libraries[/] found: {dir}");
-                }
                 else
                 {
-                    await AnsiConsole.Progress()
-                        .AutoClear(false)
-                        .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new DownloadedColumn(), new TransferSpeedColumn())
-                        .StartAsync(async ctx =>
-                        {
-                            var tasks = new Dictionary<string, ProgressTask>();
-                            var progress = new SyncProgress<CudaSetup.SetupProgress>(p =>
-                            {
-                                if (!tasks.TryGetValue(p.Package.Name, out var task))
-                                {
-                                    task = ctx.AddTask(p.Package.Name, maxValue: Math.Max(1, p.Package.ApproxBytes));
-                                    tasks[p.Package.Name] = task;
-                                }
+                    if (CudaRuntime.FindDirectory() is { } dir13)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[green]CUDA 13 libraries (whisper)[/] found: {dir13}");
+                    }
+                    else
+                    {
+                        await InstallCudaSetAsync((p, token) => CudaSetup.InstallAsync(progress: p, ct: token), "CUDA 13 libraries (whisper)", ct).ConfigureAwait(false);
+                    }
 
-                                if (p.Download.TotalBytes is { } total && total > 0)
-                                {
-                                    task.MaxValue = total;
-                                }
-
-                                task.Value = p.Download.BytesReceived;
-                            });
-                            var target = await CudaSetup.InstallAsync(progress: progress, ct: ct).ConfigureAwait(false);
-                            AnsiConsole.MarkupLineInterpolated($"[green]CUDA libraries[/] → {target}");
-                        }).ConfigureAwait(false);
+                    if (CudaRuntime.FindOnnxDirectory() is { } dir12)
+                    {
+                        AnsiConsole.MarkupLineInterpolated($"[green]CUDA 12 + cuDNN 9 libraries (Qwen3-TTS)[/] found: {dir12}");
+                    }
+                    else
+                    {
+                        await InstallCudaSetAsync((p, token) => CudaSetup.InstallForOnnxRuntimeAsync(progress: p, ct: token), "CUDA 12 + cuDNN 9 libraries (Qwen3-TTS)", ct).ConfigureAwait(false);
+                    }
                 }
             }
 
@@ -106,6 +95,34 @@ internal static class SetupCommand
         });
 
         return command;
+    }
+
+    private static async Task InstallCudaSetAsync(Func<IProgress<CudaSetup.SetupProgress>, CancellationToken, Task<string>> install, string title, CancellationToken ct)
+    {
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new DownloadedColumn(), new TransferSpeedColumn())
+            .StartAsync(async ctx =>
+            {
+                var tasks = new Dictionary<string, ProgressTask>();
+                var progress = new SyncProgress<CudaSetup.SetupProgress>(p =>
+                {
+                    if (!tasks.TryGetValue(p.Package.Name, out var task))
+                    {
+                        task = ctx.AddTask(p.Package.Name, maxValue: Math.Max(1, p.Package.ApproxBytes));
+                        tasks[p.Package.Name] = task;
+                    }
+
+                    if (p.Download.TotalBytes is { } total && total > 0)
+                    {
+                        task.MaxValue = total;
+                    }
+
+                    task.Value = p.Download.BytesReceived;
+                });
+                var target = await install(progress, ct).ConfigureAwait(false);
+                AnsiConsole.MarkupLineInterpolated($"[green]{title}[/] → {target}");
+            }).ConfigureAwait(false);
     }
 
     private static async Task WithBarAsync(string title, Func<IProgress<DownloadProgress>, Task> action, CancellationToken ct)

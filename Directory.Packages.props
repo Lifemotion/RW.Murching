@@ -14,7 +14,7 @@
     <PackageVersion Include="ElBruno.QwenTTS" Version="1.10.0" />
     <PackageVersion Include="ElBruno.QwenTTS.VoiceCloning" Version="1.10.0" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" />
-    <PackageVersion Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" />
     <!-- Infrastructure -->
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.0" />
