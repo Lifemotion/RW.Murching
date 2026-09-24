@@ -27,3 +27,7 @@ out/
 !tests/**/*.srt
 !tests/**/*.vtt
 !samples/expected/*
+
+# Python
+__pycache__/
+*.pyc
