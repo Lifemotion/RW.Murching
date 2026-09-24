@@ -1,79 +1,233 @@
 # Bwl.Murching
 
-Local, offline subtitles for audio and video — and, next, local re-voicing (dubbing). C# / .NET 10, Windows first.
+Локальные субтитры для аудио и видео, а следующим шагом — локальная переозвучка (даббинг). C# / .NET 10, пока только Windows. Ничего не уходит в облако: распознавание делает whisper.cpp на вашей видеокарте (или процессоре), звук извлекает ffmpeg.
 
 ```
-murch subs lecture.mp4                 # -> lecture.ru.srt (language auto-detected)
-murch subs talk.mkv -f srt,vtt --json  # several formats + transcript with word timings
-murch subs film.mp4 --embed            # soft-subs muxed into film.subbed.mp4
-murch subs talk.mp4 --translate -m large-v3   # English subtitles for foreign speech (not with *turbo* models)
-murch cues talk.en.murch.json --max-line-length 37   # re-layout cues from a saved transcript, no ASR
-murch probe film.mp4                   # streams, duration, codecs
-murch doctor                           # ffmpeg / GPU / CUDA / models check
-murch setup                            # download ffmpeg, CUDA libraries, default models
-murch models list | pull small | rm small
+murch subs lecture.mp4                    # -> lecture.ru.srt, язык определяется сам
+murch subs talk.mkv -f srt,vtt --json     # несколько форматов + транскрипт со словами
+murch subs film.mp4 --embed               # субтитры внутрь копии видео: film.subbed.mp4
+murch subs talk.mp4 --translate -m large-v3   # английские субтитры к иностранной речи
+murch cues talk.ru.murch.json --max-line-length 37   # перевёрстка без повторного распознавания
+murch probe film.mp4                      # потоки, длительность, кодеки
+murch doctor                              # ffmpeg / GPU / CUDA / модели
+murch setup                               # скачать ffmpeg, библиотеки CUDA и модели
 ```
 
-## How it works
+Репозитории: <https://dev.rainwalker.ee/RainWalker/RW.Murching> (основной), зеркало <https://github.com/Lifemotion/RW.Murching>.
 
-```
-ffmpeg ──► 16 kHz mono PCM ──► Silero VAD ──► speech chunks (≤30 s) ──► whisper.cpp (CUDA)
-        │                                                               │
-        └──────────────── probe (ffprobe) ──────────────────────┐        ▼
-                                                               │   segments + tokens (DTW)
-                                                               │        ▼
-                                                               │   words ──► hallucination filter
-                                                               │        ▼
-                                                               │   cue builder (DP: sentences, pauses, 42×2, ≤7 s, ≤21 cps)
-                                                               ▼        ▼
-                                                        .srt / .vtt / .ass / .txt / .murch.json
-```
+---
 
-* **ASR**: [Whisper.net](https://github.com/sandrohanea/whisper.net) (whisper.cpp) with the `large-v3-turbo` GGML model by default; CUDA 13 build on NVIDIA GPUs, CPU fallback.
-* **VAD**: Silero v5 through whisper.cpp — the model only ever sees speech, which kills most "Thanks for watching" hallucinations, and long silences never reach the decoder.
-* **Music fallback**: Silero ignores singing, rap over a beat and vocoded voices. Energetic gaps between speech chunks (RMS above −40 dBFS, ≥3 s) are transcribed anyway as *tentative* chunks and pass a strict filter (≥3 words, mean token probability ≥0.75, no repeated lines, no n-gram loops, no stock phrases like "I'm going to go"). Each tentative chunk is first run through Whisper's language detection and dropped unless it agrees with the file language (p ≥ 0.5): chanting, foreign choruses and pure music yield random low-probability languages, while real lyrics come back in the right language. Disable with `--no-music-fallback`.
-* **Word timing**: token timestamps with DTW alignment (per-model alignment heads); words are re-assembled from byte-level BPE tokens with the segment text as ground truth (Cyrillic safe).
-* **Cue building**: minimum-cost segmentation over words — prefers sentence ends, clause punctuation, Whisper segment ends and pauses; balanced two-line wrapping that breaks at punctuation and never strands an article/preposition; reading-speed aware display times with a minimum gap between cues.
-* **ffmpeg** is downloaded on demand (BtbN portable build) if not on `PATH`.
+## 1. Установка
 
-## Requirements
+### 1.1 .NET 10 SDK
 
-* Windows 11 x64, .NET 10 SDK.
-* NVIDIA GPU + recent driver (CUDA 13) for GPU inference. `murch setup --cuda` fetches the redistributable `cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` into `%LOCALAPPDATA%\Bwl.Murching\cuda`; without them whisper.cpp runs on the CPU.
-* Everything else (ffmpeg, models) is fetched by `murch setup`.
+Нужен .NET SDK 10.0 (не только Runtime). Проверить:
 
-## Layout
-
-```
-src/Bwl.Murching.Core   library: Media (ffmpeg), Audio, Vad, Asr (Whisper), Subtitles (cues, writers), Pipeline, Models, Runtime
-src/Bwl.Murching.Cli    `murch` command line (System.CommandLine + Spectre.Console)
-tests/                  xunit
-tools/                  dev-only: portable ffmpeg and CUDA DLLs (git-ignored)
-samples/                test media (git-ignored, see samples/README.md)
+```powershell
+dotnet --list-sdks
+# 10.0.xxx [C:\Program Files\dotnet\sdk]
 ```
 
-Data lives in `%LOCALAPPDATA%\Bwl.Murching` (`models/`, `cuda/`, `ffmpeg/`); override with `MURCH_HOME`.
+Если строки с `10.0.` нет, поставить любым способом:
 
-## Performance (RTX 3060 12 GB, Ryzen 9 5900X)
+```powershell
+winget install Microsoft.DotNet.SDK.10
+```
 
-| Input | Speech | Wall time | Speed |
-|-------|--------|-----------|-------|
-| JFK Rice speech, 23:47 | 17:32 in 53 chunks | 41 s | 35× real time |
-| Sintel trailer, 52 s | 8 s in 4 chunks | 3.9 s (1.4 s model load) | 13× |
+или скачать инсталлятор с <https://dotnet.microsoft.com/download/dotnet/10.0> (раздел SDK, x64). После установки перезапустить терминал.
 
-Default settings: `large-v3-turbo`, beam 5, DTW word alignment on, VAD on.
+### 1.2 Получить исходники и собрать
 
-Notes:
-* `large-v3-turbo` was distilled for transcription and mostly ignores `--translate`; pick `large-v3` or `medium` for Whisper's built-in translation to English.
-* `--json` writes `<name>.<lang>.murch.json` with segments and word timings; `murch cues` rebuilds subtitles from it in milliseconds, which is the fast way to tune `--max-line-length`, `--cps`, `--pause-split`.
-* Music-heavy material: try `--vad-threshold 0.35` (default 0.5) so quiet speech over music is not skipped.
+```powershell
+git clone https://dev.rainwalker.ee/RainWalker/RW.Murching.git
+cd RW.Murching
+dotnet build -c Release
+```
 
-## Verifying against a cloud reference
+Сборка забирает пакеты NuGet (Whisper.net с CUDA-рантаймом, System.CommandLine, Spectre.Console); первый раз это ~200 МБ.
 
-`scripts/verify-elevenlabs.py` uploads the extracted audio to ElevenLabs Scribe, caches the response as `<name>.eleven.json` and prints WER plus median word-onset offset between the two transcripts (`set ELEVENLABS_API_KEY=...` first; the key never goes into the repo). On a mixed bag of 13 clips (documentary, game dialogue, Twitter rants, rap, Russian songs) clean speech came out at 2–3.5% WER against Scribe with a ~70 ms onset offset; music-mixed clips were where the VAD-only pipeline lost words, which is what the music fallback addresses.
+Исполняемый файл после сборки:
 
-## Roadmap
+```
+src\Bwl.Murching.Cli\bin\Release\net10.0\win-x64\murch.exe
+```
 
-1. ✅ Subtitles (this).
-2. Dubbing: transcript → local translation (Ollama) → local TTS (sherpa-onnx: Piper / Kokoro / Matcha voices) → fit to timing → mix over the original track with ducking → mux.
-3. Speaker diarization (sherpa-onnx) for multi-voice dubbing and speaker-coloured subtitles.
+Удобно добавить эту папку в `PATH` или сделать алиас. Все команды ниже написаны как `murch ...`; если папка не в `PATH`, подставляйте полный путь либо запускайте через `dotnet run --project src\Bwl.Murching.Cli -- subs file.mp4`.
+
+### 1.3 Внешние компоненты: одна команда
+
+```powershell
+murch setup
+```
+
+Команда скачивает всё, чего нет, в `%LOCALAPPDATA%\Bwl.Murching`:
+
+| Что | Откуда | Размер | Зачем |
+|-----|--------|--------|-------|
+| ffmpeg + ffprobe (портативная сборка BtbN) | GitHub | ~100 МБ | декодирование любого аудио/видео, встраивание субтитров |
+| `cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` | NVIDIA redist | ~440 МБ | GPU-инференс whisper.cpp; пропускается, если нет драйвера NVIDIA |
+| `ggml-large-v3-turbo.bin` | Hugging Face (ggerganov/whisper.cpp) | 1,6 ГБ | модель распознавания по умолчанию |
+| `ggml-silero-v5.1.2.bin` | Hugging Face (ggml-org/whisper-vad) | 1 МБ | детектор речи |
+
+Отдельные части: `murch setup --ffmpeg`, `murch setup --cuda`, `murch setup --models`, `murch setup --model small`.
+
+Если ffmpeg уже стоит и есть в `PATH`, он будет использован. Свою папку с ffmpeg можно указать переменной `MURCH_FFMPEG_DIR`, с CUDA-библиотеками — `MURCH_CUDA_DIR`, корень для данных — `MURCH_HOME`.
+
+### 1.4 Проверка
+
+```powershell
+murch doctor
+```
+
+Ожидаемый результат на машине с NVIDIA:
+
+```
+ffmpeg               ok   N-126782-... C:\...\ffmpeg.exe
+NVIDIA driver        ok   nvcuda.dll loads
+CUDA 13 libraries    ok   C:\Users\...\Bwl.Murching\cuda
+whisper.cpp runtime  ok   Cuda: WHISPER : CUDA : ARCHS = 750,800,860,...
+Models               ok   large-v3-turbo, silero-v5.1.2
+```
+
+Если в строке `whisper.cpp runtime` стоит `Cpu`, а видеокарта NVIDIA есть, значит не найдены библиотеки CUDA: `murch setup --cuda`. Драйвер должен поддерживать CUDA 13 (ветка 580+; `nvidia-smi` показывает версию CUDA в правом верхнем углу).
+
+Без видеокарты всё работает на процессоре, просто медленнее: `large-v3-turbo` идёт примерно в 2× реального времени на 12 ядрах, `small` — существенно быстрее.
+
+---
+
+## 2. Использование
+
+### 2.1 Субтитры к файлу
+
+```powershell
+murch subs "C:\video\lecture.mp4"
+```
+
+Что происходит:
+
+1. `ffprobe` читает контейнер, `ffmpeg` декодирует дорожку в 16 кГц моно.
+2. Silero VAD находит речь и режет её на куски до 30 с.
+3. Участки без «речи», но со звуком (пение, рэп поверх бита) тоже уходят в Whisper как сомнительные и проходят строгий фильтр.
+4. Whisper определяет язык по самому длинному куску и распознаёт всё с пословными таймингами.
+5. Фильтр убирает типовые галлюцинации («Субтитры сделал…», «Thanks for watching», зациклившиеся фразы).
+6. Из слов собираются реплики: до 2 строк по 42 символа, до 7 с, разрывы по концам предложений и паузам, скорость чтения до 21 симв/с.
+7. Файл пишется рядом с исходником: `lecture.ru.srt`.
+
+Внизу печатается сводка: язык, движок (GPU/CPU), сколько речи и реплик, время работы и первые реплики для беглой проверки.
+
+### 2.2 Полезные ключи `murch subs`
+
+| Ключ | Назначение |
+|------|------------|
+| `-o путь` | файл (для одного формата) или папка для результатов |
+| `-f srt,vtt,ass,txt` | форматы, можно несколько; `txt` — текст с таймкодами `[start -> end]` |
+| `-l ru` | зафиксировать язык вместо автоопределения |
+| `-m small` | другая модель: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`, квантованные `*-q5_0`, `*-q8_0`, либо путь к своему `.bin` |
+| `--translate -m large-v3` | перевод речи на английский силами Whisper (turbo-модели этот режим игнорируют) |
+| `--json` | сохранить транскрипт со словами `<имя>.<язык>.murch.json` (нужен для даббинга и для `murch cues`) |
+| `--embed` | положить субтитры мягкой дорожкой в копию видео `<имя>.subbed.mp4/mkv` |
+| `--from 1:30 --to 5:00` | обработать только фрагмент; тайминги остаются абсолютными |
+| `--audio-stream 1` | выбрать дорожку, если их несколько |
+| `--prompt "Кёртис, Хормуз"` | подсказка модели: имена, термины, стиль пунктуации |
+| `--beam 1` | жадное декодирование, быстрее и чуть хуже |
+| `--device cpu` | принудительно процессор |
+| `--vad-threshold 0.35` | ловить тихую речь поверх музыки (по умолчанию 0.5) |
+| `--no-music-fallback` | не трогать участки, которые VAD не признал речью |
+| `--no-vad` | скормить Whisper весь файл целиком (для чистой речи не нужно) |
+| `--max-line-length 37 --max-lines 2 --max-duration 6 --cps 17` | правила вёрстки |
+| `-v`, `-vv` | подробный лог; `-vv` показывает каждый распознанный сегмент и решения фильтра |
+| `-q` | без прогресс-баров, только итог |
+
+### 2.3 Перевёрстка без повторного распознавания
+
+Распознавание — самая долгая часть. Сохраните транскрипт один раз и играйте с вёрсткой мгновенно:
+
+```powershell
+murch subs film.mp4 --json
+murch cues film.en.murch.json --max-line-length 37 --cps 17 -f srt,vtt
+```
+
+### 2.4 Пакетная обработка
+
+PowerShell:
+
+```powershell
+Get-ChildItem C:\video\*.mp4 | ForEach-Object { murch subs $_.FullName -o C:\video\subs\ --json -q }
+```
+
+### 2.5 Модели
+
+```powershell
+murch models list          # каталог, размеры, что скачано
+murch models pull medium   # скачать
+murch models rm tiny       # удалить
+murch models dir           # где лежат
+```
+
+Рекомендации: `large-v3-turbo` (по умолчанию) — лучший баланс, ~1,6 ГБ VRAM; `large-v3` — чуть точнее и умеет `--translate`, в два раза медленнее; `small`/`base` — для слабых машин и черновиков.
+
+---
+
+## 3. Как это устроено
+
+```
+ffmpeg ──► 16 kHz mono PCM ──► Silero VAD ──► речевые чанки (≤30 с) ──┐
+        │                          │                                   ├──► whisper.cpp (CUDA) ──► сегменты + токены (DTW)
+        └── ffprobe                └── энергичные «не-речевые» участки ─┘          │
+                                       (сомнительные, строгий фильтр)              ▼
+                                                                          слова ──► фильтр галлюцинаций
+                                                                                   ▼
+                                                                          построитель реплик (ДП по предложениям,
+                                                                          паузам, 42×2, ≤7 с, ≤21 симв/с)
+                                                                                   ▼
+                                                                  .srt / .vtt / .ass / .txt / .murch.json
+```
+
+* **ASR**: [Whisper.net](https://github.com/sandrohanea/whisper.net) (whisper.cpp), модель `large-v3-turbo` GGML; сборка CUDA 13 для NVIDIA, откат на CPU.
+* **VAD**: Silero v5 через whisper.cpp — модель видит только речь, длинные тишины не доходят до декодера.
+* **Музыкальный фолбэк**: Silero не считает речью пение, рэп и вокодер. Промежутки длиннее 3 с с уровнем выше −40 dBFS распознаются как сомнительные: сначала определение языка по фрагменту (не совпал с языком файла — фрагмент выброшен), затем строгий фильтр (≥3 слова, средняя вероятность ≥0,75, без повторов и циклов n-грамм, без дежурных фраз вроде «I'm going to go»).
+* **Пословные тайминги**: token timestamps + DTW-выравнивание по attention-головам модели; слова собираются из байтовых BPE-токенов, а текст берётся из сегмента (кириллица не ломается).
+* **Реплики**: минимизация стоимости разбиения — концы предложений, запятые, паузы, штрафы за короткие реплики и за перенос строки после предлога/союза; время показа растягивается под скорость чтения, между репликами минимум 80 мс.
+
+### Проверка качества
+
+`scripts/verify-elevenlabs.py` отправляет звук в ElevenLabs Scribe, кэширует ответ как `<имя>.eleven.json` и печатает WER и медианный сдвиг начала слов между двумя транскриптами (`$env:ELEVENLABS_API_KEY="..."` заранее; ключ в репозиторий не попадает). На наборе из 13 разношёрстных роликов чистая речь дала 2–3,5% WER при сдвиге ~70 мс; на песнях и рэпе поверх бита Whisper теряет строки (25–45%).
+
+### Производительность (RTX 3060 12 ГБ, Ryzen 9 5900X)
+
+| Вход | Речь | Время | Скорость |
+|------|------|-------|----------|
+| Речь Кеннеди в Райсе, 23:47 | 17:32 в 53 чанках | 41 с | 35× реального времени |
+| Трейлер Sintel, 52 с | 8 с в 4 чанках | 3,9 с (1,4 с загрузка модели) | 13× |
+
+---
+
+## 4. Структура репозитория
+
+```
+src/Bwl.Murching.Core   библиотека: Media (ffmpeg), Audio, Vad, Asr (Whisper), Subtitles, Pipeline, Models, Runtime
+src/Bwl.Murching.Cli    консоль `murch` (System.CommandLine + Spectre.Console)
+tests/                  xunit, 136 тестов: dotnet test
+scripts/                fetch-samples.ps1 (тестовые медиа), verify-elevenlabs.py (сравнение с облачным ASR)
+tools/                  только для разработки: портативный ffmpeg и DLL CUDA (в git не входят)
+samples/                тестовые медиа (в git не входят, см. samples/README.md)
+```
+
+Данные приложения: `%LOCALAPPDATA%\Bwl.Murching` (`models/`, `cuda/`, `ffmpeg/`); переопределяется `MURCH_HOME`.
+
+## 5. Типичные проблемы
+
+| Симптом | Причина и решение |
+|---------|-------------------|
+| `whisper.cpp runtime ... Cpu` при наличии NVIDIA | нет CUDA-библиотек: `murch setup --cuda`; либо старый драйвер (нужна поддержка CUDA 13) |
+| `ffmpeg/ffprobe were not found` | `murch setup --ffmpeg` или поставить ffmpeg и добавить в `PATH` |
+| Субтитры на английском при `--translate`, хотя речь другая | модель `*-turbo` не переводит; `-m large-v3` или `-m medium` |
+| Пропущены строки песни / рэпа | понизить `--vad-threshold 0.35`; проверить, что не указан `--no-music-fallback` |
+| Странные фразы в тишине или на музыке | это галлюцинации Whisper; `-vv` покажет, что отфильтровано |
+| Медленно | проверить `murch doctor` (GPU или CPU), взять `--beam 1` или модель поменьше |
+
+## 6. Дорожная карта
+
+1. ✅ Субтитры.
+2. Перевод субтитров локальной LLM (Ollama) и даббинг: транскрипт → перевод → локальный TTS (sherpa-onnx: Piper / Kokoro) → подгонка под тайминг → микс с приглушением оригинала → мультиплекс.
+3. Диаризация спикеров (sherpa-onnx) для многоголосого даббинга и цветных субтитров по говорящим.
