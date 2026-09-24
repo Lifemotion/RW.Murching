@@ -6,6 +6,7 @@ using Bwl.Murching.Models;
 using Bwl.Murching.Pipeline;
 using Bwl.Murching.Runtime;
 using Bwl.Murching.Subtitles;
+using Bwl.Murching.Translation;
 using Bwl.Murching.Vad;
 using Microsoft.Extensions.Logging;
 using Spectre.Console;
@@ -30,7 +31,7 @@ internal static class SubsCommand
             DefaultValueFactory = _ => ModelCatalog.DefaultWhisperModel,
         };
         var language = new Option<string>("--language", "-l") { Description = "Spoken language as ISO 639-1 code (ru, en, ...) or 'auto'.", DefaultValueFactory = _ => "auto" };
-        var translate = new Option<bool>("--translate") { Description = "Translate to English with Whisper instead of transcribing." };
+        var whisperTranslate = new Option<bool>("--whisper-translate") { Description = "Let Whisper itself output English instead of the spoken language (not with *turbo models). For other languages use --translate <lang>." };
         var device = new Option<string>("--device", "-d") { Description = "Compute device: auto, cuda, cpu.", DefaultValueFactory = _ => "auto" }.AcceptOnlyFromAmong("auto", "cuda", "cpu");
         var threads = new Option<int?>("--threads", "-t") { Description = "CPU threads for whisper." };
         var beam = new Option<int>("--beam") { Description = "Beam size (1 = greedy, faster).", DefaultValueFactory = _ => 5 };
@@ -52,11 +53,16 @@ internal static class SubsCommand
         var from = new Option<string?>("--from") { Description = "Start position (e.g. 90, 1:30, 00:01:30.5)." };
         var to = new Option<string?>("--to") { Description = "End position." };
         var preview = new Option<int>("--preview") { Description = "Print the first N cues after finishing.", DefaultValueFactory = _ => 6 };
+        var translateTo = new Option<string?>("--translate") { Description = "Translate the subtitles into this language (ISO 639-1) with a local Ollama model, e.g. --translate ru." };
+        var bilingual = new Option<bool>("--bilingual") { Description = "With --to: also write <name>.<src>-<to>.srt with original and translation in every cue." };
+        var translatorModel = new Option<string>("--translator-model") { Description = "Ollama model for --to.", DefaultValueFactory = _ => TranslationOptions.DefaultModel };
+        var glossary = new Option<string?>("--glossary") { Description = "Hints for the translator: names, terminology, register." };
 
         var command = new Command("subs", "Transcribe speech and write subtitles.")
         {
-            input, output, format, model, language, translate, device, threads, beam, prompt, context,
+            input, output, format, model, language, device, threads, beam, prompt, context,
             noVad, vadThreshold, vadMinSilence, noFallback, noDtw, noFilter, maxLineLength, maxLines, maxDuration, cps, json, embed, stream, from, to, preview,
+            translateTo, whisperTranslate, bilingual, translatorModel, glossary,
         };
 
         command.SetAction(async (parseResult, ct) =>
@@ -87,7 +93,7 @@ internal static class SubsCommand
                 {
                     Model = parseResult.GetValue(model)!,
                     Language = parseResult.GetValue(language)!,
-                    TranslateToEnglish = parseResult.GetValue(translate),
+                    TranslateToEnglish = parseResult.GetValue(whisperTranslate),
                     Device = Enum.Parse<ComputeDevice>(parseResult.GetValue(device)!, ignoreCase: true),
                     Threads = parseResult.GetValue(threads),
                     BeamSize = Math.Max(1, parseResult.GetValue(beam)),
@@ -115,6 +121,14 @@ internal static class SubsCommand
                 End = ParseTime(parseResult.GetValue(to)),
                 SaveTranscriptJson = parseResult.GetValue(json),
                 EmbedIntoVideo = parseResult.GetValue(embed),
+                TranslateTo = parseResult.GetValue(translateTo)?.Trim().ToLowerInvariant(),
+                Bilingual = parseResult.GetValue(bilingual),
+                Translation = new TranslationOptions
+                {
+                    TargetLanguage = parseResult.GetValue(translateTo) ?? "en",
+                    Model = parseResult.GetValue(translatorModel)!,
+                    Glossary = parseResult.GetValue(glossary),
+                },
             };
 
             var job = new SubtitleJob(options, logger);
@@ -205,6 +219,7 @@ internal static class SubsCommand
         JobStage.Transcribe => "Transcribe",
         JobStage.BuildCues => "Build cues",
         JobStage.Write => "Write",
+        JobStage.Translate => "Translate",
         JobStage.Embed => "Embed",
         _ => stage.ToString(),
     };
@@ -221,6 +236,16 @@ internal static class SubsCommand
         foreach (var path in r.OutputPaths)
         {
             table.AddRow("Output", $"[green]{Markup.Escape(path)}[/]");
+        }
+
+        if (r.TranslatorName is not null)
+        {
+            table.AddRow("Translator", Markup.Escape(r.TranslatorName));
+        }
+
+        foreach (var path in r.TranslatedOutputPaths)
+        {
+            table.AddRow("Translated", $"[green]{Markup.Escape(path)}[/]");
         }
 
         if (r.TranscriptJsonPath is not null)

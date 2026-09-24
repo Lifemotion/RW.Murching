@@ -38,9 +38,9 @@ public class SubtitleWritersTests
     }
 
     [Fact]
-    public void Txt_output_joins_lines_per_cue()
+    public void Txt_output_has_timecodes_and_joins_lines_per_cue()
     {
-        Assert.Equal("Hello <world> & friends\nПривет, {мир}!\n", SubtitleWriters.ToText(Sample(), SubtitleFormat.Txt));
+        Assert.Equal("[   1.00 ->    3.50]  Hello <world> & friends\n[   4.00 -> 3601.25]  Привет, {мир}!\n", SubtitleWriters.ToText(Sample(), SubtitleFormat.Txt));
     }
 
     [Theory]

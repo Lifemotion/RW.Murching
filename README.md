@@ -6,7 +6,8 @@
 murch subs lecture.mp4                    # -> lecture.ru.srt, язык определяется сам
 murch subs talk.mkv -f srt,vtt --json     # несколько форматов + транскрипт со словами
 murch subs film.mp4 --embed               # субтитры внутрь копии видео: film.subbed.mp4
-murch subs talk.mp4 --translate -m large-v3   # английские субтитры к иностранной речи
+murch subs talk.mp4 --translate ru --bilingual   # + перевод на русский локальной LLM (Ollama)
+murch translate talk.en.srt --to ru               # перевести готовые субтитры
 murch cues talk.ru.murch.json --max-line-length 37   # перевёрстка без повторного распознавания
 murch probe film.mp4                      # потоки, длительность, кодеки
 murch doctor                              # ffmpeg / GPU / CUDA / модели
@@ -120,10 +121,13 @@ murch subs "C:\video\lecture.mp4"
 | Ключ | Назначение |
 |------|------------|
 | `-o путь` | файл (для одного формата) или папка для результатов |
-| `-f srt,vtt,ass,txt` | форматы, можно несколько; `txt` — текст с таймкодами `[start -> end]` |
+| `-f srt,vtt,ass,txt` | форматы, можно несколько; `txt` — текст с таймкодами `[   0.00 ->    4.04]  реплика` |
 | `-l ru` | зафиксировать язык вместо автоопределения |
 | `-m small` | другая модель: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`, квантованные `*-q5_0`, `*-q8_0`, либо путь к своему `.bin` |
-| `--translate -m large-v3` | перевод речи на английский силами Whisper (turbo-модели этот режим игнорируют) |
+| `--translate ru` | перевод субтитров на указанный язык локальной LLM через Ollama (см. 2.6); пишет `<имя>.ru.srt` и т.д. |
+| `--bilingual` | вместе с `--translate`: ещё файл `<имя>.<исх>-ru.srt`, где в каждой реплике оригинал и перевод |
+| `--translator-model qwen3:14b`, `--glossary "имена, термины"` | модель Ollama и подсказки переводчику |
+| `--whisper-translate -m large-v3` | перевод речи на английский силами самого Whisper (turbo-модели этот режим игнорируют) |
 | `--json` | сохранить транскрипт со словами `<имя>.<язык>.murch.json` (нужен для даббинга и для `murch cues`) |
 | `--embed` | положить субтитры мягкой дорожкой в копию видео `<имя>.subbed.mp4/mkv` |
 | `--from 1:30 --to 5:00` | обработать только фрагмент; тайминги остаются абсолютными |
@@ -155,7 +159,20 @@ PowerShell:
 Get-ChildItem C:\video\*.mp4 | ForEach-Object { murch subs $_.FullName -o C:\video\subs\ --json -q }
 ```
 
-### 2.5 Модели
+### 2.5 Перевод субтитров (Ollama)
+
+Перевод делает локальная LLM через [Ollama](https://ollama.com): поставить Ollama, затем
+
+```powershell
+ollama pull qwen3.5:9b          # ~6,6 ГБ, модель по умолчанию; qwen3:14b точнее, но нужна карта на 12+ ГБ
+murch subs talk.mp4 --translate ru --bilingual
+murch translate talk.en.srt --to ru -f srt,txt          # уже готовые .srt/.vtt
+murch translate talk.en.murch.json --to de --glossary "Kurtis = Кёртис; сохранять сленг"
+```
+
+Реплики переводятся пачками по 24 с контекстом предыдущих строк, модель обязана вернуть ровно столько же строк (структурированный JSON-ответ); при расхождении пачка переводится построчно, так что тайминги никогда не «съезжают». Результат: `<имя>.ru.srt`, `<имя>.ru.txt`, при `--bilingual` ещё `<имя>.en-ru.srt`. Whisper к этому моменту уже выгружен, поэтому LLM и распознавание не делят видеопамять.
+
+### 2.6 Модели
 
 ```powershell
 murch models list          # каталог, размеры, что скачано
@@ -205,9 +222,9 @@ ffmpeg ──► 16 kHz mono PCM ──► Silero VAD ──► речевые �
 ## 4. Структура репозитория
 
 ```
-src/Bwl.Murching.Core   библиотека: Media (ffmpeg), Audio, Vad, Asr (Whisper), Subtitles, Pipeline, Models, Runtime
+src/Bwl.Murching.Core   библиотека: Media (ffmpeg), Audio, Vad, Asr (Whisper), Subtitles, Translation (Ollama), Pipeline, Models, Runtime
 src/Bwl.Murching.Cli    консоль `murch` (System.CommandLine + Spectre.Console)
-tests/                  xunit, 136 тестов: dotnet test
+tests/                  xunit, 143 теста: dotnet test
 scripts/                fetch-samples.ps1 (тестовые медиа), verify-elevenlabs.py (сравнение с облачным ASR)
 tools/                  только для разработки: портативный ffmpeg и DLL CUDA (в git не входят)
 samples/                тестовые медиа (в git не входят, см. samples/README.md)
@@ -221,7 +238,8 @@ samples/                тестовые медиа (в git не входят, �
 |---------|-------------------|
 | `whisper.cpp runtime ... Cpu` при наличии NVIDIA | нет CUDA-библиотек: `murch setup --cuda`; либо старый драйвер (нужна поддержка CUDA 13) |
 | `ffmpeg/ffprobe were not found` | `murch setup --ffmpeg` или поставить ffmpeg и добавить в `PATH` |
-| Субтитры на английском при `--translate`, хотя речь другая | модель `*-turbo` не переводит; `-m large-v3` или `-m medium` |
+| `--whisper-translate` оставил исходный язык | модель `*-turbo` не переводит; `-m large-v3` или `-m medium`, либо `--translate en` через Ollama |
+| `Ollama model ... is not available` | запустить Ollama (`ollama serve` или приложение) и `ollama pull qwen3.5:9b` |
 | Пропущены строки песни / рэпа | понизить `--vad-threshold 0.35`; проверить, что не указан `--no-music-fallback` |
 | Странные фразы в тишине или на музыке | это галлюцинации Whisper; `-vv` покажет, что отфильтровано |
 | Медленно | проверить `murch doctor` (GPU или CPU), взять `--beam 1` или модель поменьше |
@@ -229,5 +247,6 @@ samples/                тестовые медиа (в git не входят, �
 ## 6. Дорожная карта
 
 1. ✅ Субтитры.
-2. Перевод субтитров локальной LLM (Ollama) и даббинг: транскрипт → перевод → локальный TTS (sherpa-onnx: Piper / Kokoro) → подгонка под тайминг → микс с приглушением оригинала → мультиплекс.
-3. Диаризация спикеров (sherpa-onnx) для многоголосого даббинга и цветных субтитров по говорящим.
+2. ✅ Перевод субтитров локальной LLM (Ollama).
+3. Даббинг: переведённые реплики → TTS с клонированием голоса по каждому сегменту оригинала → подгонка под тайминг → микс с приглушением оригинала → мультиплекс.
+4. Диаризация спикеров для многоголосого даббинга и цветных субтитров по говорящим.

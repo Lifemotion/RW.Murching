@@ -12,6 +12,7 @@ public enum JobStage
     Transcribe,
     BuildCues,
     Write,
+    Translate,
     Embed,
     Done,
 }

@@ -185,7 +185,7 @@ public sealed class AssWriter : ISubtitleWriter
         .Replace("\n", " ", StringComparison.Ordinal);
 }
 
-/// <summary>Plain text, one cue per line — useful for reading or feeding into a translator.</summary>
+/// <summary>Plain text with timecodes, one cue per line: <c>[   0.00 ->    4.04]  text</c>. Easy to read, diff and paste.</summary>
 public sealed class TxtWriter : ISubtitleWriter
 {
     public SubtitleFormat Format => SubtitleFormat.Txt;
@@ -196,6 +196,7 @@ public sealed class TxtWriter : ISubtitleWriter
     {
         foreach (var cue in document.Cues)
         {
+            writer.Write(string.Create(CultureInfo.InvariantCulture, $"[{cue.Start.TotalSeconds,7:0.00} -> {cue.End.TotalSeconds,7:0.00}]  "));
             writer.Write(string.Join(' ', cue.Lines));
             writer.Write('\n');
         }

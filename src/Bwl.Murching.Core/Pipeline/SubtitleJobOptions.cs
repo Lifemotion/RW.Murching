@@ -1,5 +1,6 @@
 using Bwl.Murching.Asr;
 using Bwl.Murching.Subtitles;
+using Bwl.Murching.Translation;
 using Bwl.Murching.Vad;
 
 namespace Bwl.Murching.Pipeline;
@@ -47,4 +48,13 @@ public sealed record SubtitleJobOptions
 
     /// <summary>Override the models directory (default <c>%LOCALAPPDATA%\Bwl.Murching\models</c>).</summary>
     public string? ModelsDir { get; init; }
+
+    /// <summary>Also translate the subtitles into this language with a local LLM (Ollama); null = no translation.</summary>
+    public string? TranslateTo { get; init; }
+
+    /// <summary>Write an additional bilingual file (original + translation in every cue).</summary>
+    public bool Bilingual { get; init; }
+
+    /// <summary>Translator settings (model, endpoint, glossary); target/source languages are filled in by the job.</summary>
+    public TranslationOptions? Translation { get; init; }
 }

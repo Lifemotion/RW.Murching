@@ -6,6 +6,7 @@ using Bwl.Murching.Media;
 using Bwl.Murching.Models;
 using Bwl.Murching.Runtime;
 using Bwl.Murching.Subtitles;
+using Bwl.Murching.Translation;
 using Bwl.Murching.Vad;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -14,6 +15,8 @@ namespace Bwl.Murching.Pipeline;
 
 public sealed record SubtitleJobResult(
     IReadOnlyList<string> OutputPaths,
+    IReadOnlyList<string> TranslatedOutputPaths,
+    string? TranslatorName,
     string? TranscriptJsonPath,
     string? EmbeddedVideoPath,
     Transcript Transcript,
@@ -312,6 +315,53 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
 
         Report(1);
 
+        // 10b. Translate ----------------------------------------------------------------------------------------------
+        var translatedOutputs = new List<string>();
+        string? translatorName = null;
+        if (options.TranslateTo is { Length: > 0 } target && !string.Equals(target, transcriptLanguage, StringComparison.OrdinalIgnoreCase))
+        {
+            Enter(JobStage.Translate, target);
+            var translationOptions = (options.Translation ?? new TranslationOptions { TargetLanguage = target }) with
+            {
+                TargetLanguage = target,
+                SourceLanguage = transcriptLanguage,
+            };
+            using var translator = new OllamaTranslator(translationOptions, _logger);
+            translatorName = translator.Name;
+            if (!await translator.IsAvailableAsync(ct).ConfigureAwait(false))
+            {
+                throw new InvalidOperationException($"Translation requested but Ollama model '{translationOptions.Model}' is not available at {translationOptions.Endpoint}. Start Ollama and run 'ollama pull {translationOptions.Model}'.");
+            }
+
+            var translated = await SubtitleTranslator.TranslateAsync(
+                document, translator, target, options.Cues, translationOptions.BatchSize, translationOptions.ContextLines,
+                new SyncProgress<TranslationProgress>(p => Report(p.Fraction, p.LastLine is null ? null : Truncate(p.LastLine, 60))),
+                _logger, ct).ConfigureAwait(false);
+
+            foreach (var format in options.Formats.Distinct())
+            {
+                var path = DefaultOutputPath(input, target, SubtitleWriters.Extension(format), options.OutputPath);
+                SubtitleWriters.Write(path, translated, format);
+                translatedOutputs.Add(Path.GetFullPath(path));
+                _logger.LogInformation("Wrote {Path}", path);
+            }
+
+            if (options.Bilingual)
+            {
+                var bilingual = SubtitleTranslator.Bilingual(document, translated);
+                var path = DefaultOutputPath(input, $"{transcriptLanguage}-{target}", ".srt", options.OutputPath);
+                SubtitleWriters.Write(path, bilingual, SubtitleFormat.Srt);
+                translatedOutputs.Add(Path.GetFullPath(path));
+                _logger.LogInformation("Wrote {Path}", path);
+            }
+
+            Report(1);
+        }
+        else if (options.TranslateTo is { Length: > 0 })
+        {
+            _logger.LogInformation("Translation target {Target} equals the spoken language; nothing to translate", options.TranslateTo);
+        }
+
         // 11. Embed ---------------------------------------------------------------------------------------------------
         string? embedded = null;
         if (options.EmbedIntoVideo)
@@ -345,6 +395,8 @@ public sealed class SubtitleJob(SubtitleJobOptions options, ILogger? logger = nu
         Enter(JobStage.Done);
         return new SubtitleJobResult(
             outputs,
+            translatedOutputs,
+            translatorName,
             jsonPath,
             embedded,
             transcript,

@@ -14,6 +14,7 @@ internal static class Program
         {
             SubsCommand.Create(),
             CuesCommand.Create(),
+            TranslateCommand.Create(),
             ProbeCommand.Create(),
             ModelsCommand.Create(),
             SetupCommand.Create(),
