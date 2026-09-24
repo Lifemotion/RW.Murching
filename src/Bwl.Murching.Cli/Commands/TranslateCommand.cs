@@ -92,6 +92,12 @@ internal static class TranslateCommand
                     stem = string.Join('.', parts[..^1]);
                 }
 
+                if (string.Equals(source, target, StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLineInterpolated($"[yellow]{file.Name}: already in '{target}', skipped.[/]");
+                    continue;
+                }
+
                 var perFile = options with { SourceLanguage = source };
                 using var translator = new OllamaTranslator(perFile, logger);
                 if (!await translator.IsAvailableAsync(ct).ConfigureAwait(false))
