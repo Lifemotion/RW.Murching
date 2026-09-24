@@ -168,8 +168,15 @@ public sealed class DubJob(DubbingOptions options, ILogger? logger = null)
             var start = unit.Start;
             if (start < cursor + minGap)
             {
-                drift += cursor + minGap - start;
-                start = cursor + minGap;
+                // Previous clip overran: shift, but never more than MaxDelay so delays cannot snowball.
+                var shifted = cursor + minGap;
+                var cap = unit.Start + options.MaxDelay;
+                start = shifted <= cap ? shifted : cap;
+                drift += start - unit.Start;
+                if (shifted > cap)
+                {
+                    _logger.LogDebug("#{Index} starts {Delay} late and overlaps the tail of the previous clip", unit.Index, TimeFormat.Human(start - unit.Start));
+                }
             }
 
             var startFrame = original.FrameAt(start);

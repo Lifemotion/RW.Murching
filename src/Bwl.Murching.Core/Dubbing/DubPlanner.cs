@@ -38,8 +38,10 @@ public static class DubPlanner
                 var combined = cue.End - last.Start;
                 var lastText = last.Texts[^1];
                 var sentenceEnded = TextRules.EndsSentence(lastText);
-                // Keep sentences together across cue boundaries; merge sentence to sentence only when very close.
-                var shouldMerge = gap <= options.MergeGap && combined <= options.MaxUnitDuration && (!sentenceEnded || gap <= options.MergeGap / 3);
+                // Keep a sentence together across cue boundaries; glue complete sentences only when they follow each
+                // other almost immediately. Longer utterances fit their slots far better (Russian runs ~20% longer than
+                // English and XTTS paces long texts faster), at the price of blending speakers in rapid-fire dialogue.
+                var shouldMerge = gap <= options.MergeGap && combined <= options.MaxUnitDuration && (!sentenceEnded || gap <= options.SentenceJoinGap);
                 if (shouldMerge)
                 {
                     last.Texts.Add(text);

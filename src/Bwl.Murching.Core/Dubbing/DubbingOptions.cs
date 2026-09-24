@@ -24,8 +24,14 @@ public sealed record DubbingOptions
     /// <summary>Consecutive cues closer than this are voiced as one utterance.</summary>
     public TimeSpan MergeGap { get; init; } = TimeSpan.FromMilliseconds(600);
 
+    /// <summary>Complete sentences separated by a pause up to this long are voiced as one utterance.</summary>
+    public TimeSpan SentenceJoinGap { get; init; } = TimeSpan.FromMilliseconds(200);
+
     /// <summary>Upper bound for one utterance; longer sentences are voiced in pieces.</summary>
     public TimeSpan MaxUnitDuration { get; init; } = TimeSpan.FromSeconds(14);
+
+    /// <summary>An utterance may start at most this late because the previous one overran; beyond that it starts on time and overlaps.</summary>
+    public TimeSpan MaxDelay { get; init; } = TimeSpan.FromMilliseconds(800);
 
     /// <summary>Speaker reference window around each utterance (the same voice, the same mood).</summary>
     public TimeSpan MinReference { get; init; } = TimeSpan.FromSeconds(6);
